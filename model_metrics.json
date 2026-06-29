@@ -1,0 +1,58 @@
+{
+  "train_accuracy": 0.9987,
+  "test_accuracy": 0.9934,
+  "f1_weighted": 0.9934,
+  "overfit_gap": 0.0054,
+  "best_iteration": 2999,
+  "train_rows": 50085,
+  "test_rows": 10733,
+  "total_rows": 71550,
+  "features": [
+    "age",
+    "bmi",
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "spo2",
+    "sleep_hours",
+    "pulse_pressure",
+    "bmi_age",
+    "cardio_stress",
+    "map",
+    "spo2_age",
+    "hypertension_stage",
+    "obesity_stage",
+    "sleep_risk",
+    "spo2_risk",
+    "has_cvd"
+  ],
+  "classes": [
+    "Low",
+    "Moderate",
+    "High",
+    "Critical"
+  ],
+  "population_medians": {
+    "age": 53.9,
+    "bmi": 26.3,
+    "heart_rate": 80.5,
+    "systolic_bp": 120.0,
+    "diastolic_bp": 80.0,
+    "spo2": 96.9,
+    "sleep_hours": 7.0
+  },
+  "label_distribution": {
+    "Low": 4216,
+    "Moderate": 22410,
+    "High": 25605,
+    "Critical": 19319
+  },
+  "clinical_overrides": {
+    "spo2_critical_threshold": 90,
+    "sbp_critical_threshold": 180,
+    "dbp_critical_threshold": 120,
+    "hr_critical_threshold": 130,
+    "spo2_high_threshold": 94,
+    "sbp_high_threshold": 140
+  }
+}
