@@ -97,14 +97,24 @@ try:
 except Exception:
     _best_iteration = None
 
-try:
-    import shap
+# SHAP is loaded lazily on first explain request to speed up server startup
+explainer = None
+SHAP_AVAILABLE = False
+_shap_init_done = False
 
-    explainer = shap.TreeExplainer(booster)
-    SHAP_AVAILABLE = True
-except Exception:
-    explainer = None
-    SHAP_AVAILABLE = False
+def _ensure_shap():
+    global explainer, SHAP_AVAILABLE, _shap_init_done
+    if _shap_init_done:
+        return
+    _shap_init_done = True
+    try:
+        import shap
+        explainer = shap.TreeExplainer(booster)
+        SHAP_AVAILABLE = True
+    except Exception:
+        explainer = None
+        SHAP_AVAILABLE = False
+
 
 MODEL_METRICS = None
 if os.path.exists(METRICS_PATH):
@@ -375,6 +385,8 @@ def predict(patient: PatientInput, explain: bool = Query(True, description="Comp
 
     # ---- SHAP top-3 factors (best-effort, never fails the request) ----
     top_factors = None
+    if explain:
+        _ensure_shap()
     if explain and SHAP_AVAILABLE:
         try:
             sv = explainer.shap_values(features)
