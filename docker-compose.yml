@@ -9,6 +9,7 @@ services:
       - "8000:8000"
     environment:
       - MODEL_DIR=/app/model
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     restart: always
 
   web:

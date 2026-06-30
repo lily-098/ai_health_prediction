@@ -1697,6 +1697,500 @@ body {
   background: var(--border-color);
 }
 
+/* ==========================================================================
+   ROLE SELECTION LANDING & PORTAL WORKSPACES
+   ========================================================================== */
+.portal-selector-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background-color: var(--bg-main);
+  padding: 2rem;
+  animation: scaleIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
+.portal-selector-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 1.5rem;
+  padding: 3rem;
+  width: 100%;
+  max-width: 680px;
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
 
+.portal-selector-header h1 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 2.25rem;
+  font-weight: 900;
+  color: var(--primary);
+  margin-bottom: 0.5rem;
+}
+
+.portal-selector-header p {
+  color: var(--text-muted);
+  font-size: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.portal-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 580px) {
+  .portal-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.portal-opt-card {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-inner);
+  border-radius: 1.25rem;
+  padding: 2rem 1.5rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  transition: all 0.25s ease;
+}
+
+.portal-opt-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-4px);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-md);
+}
+
+.portal-opt-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background-color: var(--primary-light);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.portal-opt-card:hover .portal-opt-icon {
+  background-color: var(--primary);
+  color: #ffffff;
+}
+
+.portal-opt-details h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.portal-opt-details p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Doctor login screen styling */
+.doctor-login-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 1.5rem;
+  padding: 3rem 2.5rem;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.doctor-login-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.75rem;
+  font-weight: 900;
+  color: var(--primary);
+  text-align: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.login-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.login-input-group label {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.login-input {
+  width: 100%;
+  padding: 0.85rem 1.1rem;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-inner);
+  border-radius: 0.75rem;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.login-input:focus {
+  border-color: var(--primary);
+}
+
+/* Tabular view for patient reports */
+.doctor-dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.doctor-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .doctor-stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.doctor-reports-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+}
+
+.reports-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.reports-table th, .reports-table td {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-inner);
+}
+
+.reports-table th {
+  background-color: var(--bg-card-header);
+  font-weight: 800;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.reports-table tr:last-child td {
+  border-bottom: none;
+}
+
+.reports-table tbody tr:hover {
+  background-color: var(--bg-input);
+}
+
+.badge-risk {
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.badge-risk.Low { background-color: var(--risk-low-bg); color: var(--risk-low); }
+.badge-risk.Moderate { background-color: var(--risk-moderate-bg); color: var(--risk-moderate); }
+.badge-risk.High { background-color: var(--risk-high-bg); color: var(--risk-high); }
+.badge-risk.Critical { background-color: var(--risk-critical-bg); color: var(--risk-critical); }
+
+/* Monospaced Log rows */
+.logs-terminal {
+  background-color: #121212;
+  color: #e0e0e0;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid #222222;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
+}
+
+.log-row {
+  border-bottom: 1px solid #1a1a1a;
+  padding: 0.4rem 0;
+  display: flex;
+  gap: 1rem;
+}
+
+.log-time {
+  color: #888888;
+  flex-shrink: 0;
+}
+
+.log-type {
+  font-weight: bold;
+  flex-shrink: 0;
+  width: 100px;
+}
+
+.log-type.AUTH { color: #d63384; }
+.log-type.TELEHEALTH { color: #0dcaf0; }
+.log-type.INFERENCE { color: #ffc107; }
+
+.log-msg {
+  color: #c0c0c0;
+}
+
+/* Patient report action buttons */
+.share-action-container {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.btn-telehealth {
+  padding: 0.75rem 1.25rem;
+  background-color: var(--primary-light);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 0.75rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.btn-telehealth:hover:not(:disabled) {
+  background-color: var(--primary);
+  color: #ffffff;
+}
+
+.btn-telehealth:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.shared-check-icon {
+  color: var(--risk-low);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+}/* ================================================================
+   PRINT MEDIA RULES (PDF EXPORT SPECIFICATION)
+   ================================================================ */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide navigation, sidebars, forms, chatbot launchers, toggles, buttons */
+  .main-nav, 
+  .app-footer, 
+  .chatbot-launcher, 
+  .chatbot-window, 
+  .dashboard-tabs, 
+  .left-column, 
+  .btn-secondary, 
+  .btn-primary, 
+  .btn-telehealth,
+  .share-action-container,
+  .api-dropdown-container,
+  .theme-toggle-btn,
+  .hero-banner,
+  .portal-selector-overlay:not(.summary-memo-modal),
+  button {
+    display: none !important;
+  }
+
+  /* Make the report card print fully across the page */
+  .app-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    display: block !important;
+  }
+
+  .report-column {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+
+  .card {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .card-header {
+    border-bottom: 2px solid #000000 !important;
+    padding: 0 0 1rem 0 !important;
+    background: transparent !important;
+    margin-bottom: 1.5rem !important;
+  }
+
+  .card-title {
+    font-size: 18pt !important;
+    color: #000000 !important;
+    font-weight: bold !important;
+  }
+
+  /* Show signature area */
+  .print-only-signature {
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  /* Ensure text matches high-contrast print rules */
+  .clinical-rule-key, .clinical-rule-val {
+    color: #000000 !important;
+  }
+
+  /* Style summary memo modal when printing */
+  .summary-memo-modal {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    background: #ffffff !important;
+    display: block !important;
+    z-index: 9999 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  .summary-memo-modal .doctor-login-card {
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .summary-memo-modal .summary-memo-body {
+    overflow-y: visible !important;
+    max-height: none !important;
+  }
+}
+
+/* ==========================================================================
+   MOBILE INTERACTIVE RESPONSIVENESS OVERRIDES
+   ========================================================================== */
+
+/* Grid utilities */
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .grid-3 {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+}
+
+/* Simulator panel layouts */
+.simulator-panel {
+  padding: 1.25rem 1.75rem 1.75rem 1.75rem;
+  border-top: 1px solid var(--border-inner);
+}
+
+@media (max-width: 576px) {
+  .simulator-panel {
+    padding: 1.25rem 1.15rem 1.15rem 1.15rem;
+  }
+}
+
+/* Mobile optimizations */
+@media (max-width: 600px) {
+  /* Connection badge shrinks to a circle containing just the dot */
+  .connection-badge {
+    font-size: 0 !important;
+    padding: 0.5rem !important;
+    gap: 0 !important;
+    width: 28px;
+    height: 28px;
+    justify-content: center;
+    border-radius: 50% !important;
+  }
+
+  /* Make tabs horizontal-scrollable on mobile instead of stacking/wrapping */
+  .dashboard-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none; /* Firefox */
+    padding-bottom: 2px;
+  }
+  .dashboard-tabs::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+  .dashboard-tabs .tab-btn {
+    flex-shrink: 0 !important;
+  }
+}
+
+/* Stacking of scenario comparison columns on mobile */
+@media (max-width: 580px) {
+  .comparison-grid {
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+  }
+  .comparison-column:first-child {
+    border-right: none !important;
+    border-bottom: 1px solid var(--border-inner) !important;
+  }
+  
+  /* Brand titles sizing for small displays */
+  .brand-title {
+    font-size: 1.15rem !important;
+  }
+  .brand-subtitle {
+    font-size: 0.7rem !important;
+  }
+}
 

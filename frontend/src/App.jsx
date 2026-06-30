@@ -8,10 +8,213 @@ function App() {
   const [heroCollapsed, setHeroCollapsed] = useState(false);
 
   // API Config
-  const [apiUrl, setApiUrl] = useState("http://127.0.0.1:8000");
+  const [apiUrl, setApiUrl] = useState(() => {
+    if (typeof window !== "undefined" && window.location) {
+      const hostname = window.location.hostname;
+      if (hostname) {
+        return `http://${hostname}:8000`;
+      }
+    }
+    return "http://127.0.0.1:8000";
+  });
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
   const [apiConnected, setApiConnected] = useState(false);
   const [modelInfo, setModelInfo] = useState(null);
+
+  // Portal Role Selection Mode: "select", "patient", "doctor_login", "doctor"
+  const [portalMode, setPortalMode] = useState("select");
+  
+  // Doctor Auth States
+  const [doctorUsername, setDoctorUsername] = useState("doctor");
+  const [doctorPassword, setDoctorPassword] = useState("");
+  const [doctorToken, setDoctorToken] = useState(() => localStorage.getItem("doctorToken") || "");
+  const [loginError, setLoginError] = useState("");
+  
+  // Doctor Dashboard States
+  const [doctorReports, setDoctorReports] = useState([]);
+  const [doctorLogs, setDoctorLogs] = useState([]);
+  const [doctorTab, setDoctorTab] = useState("reports"); // "reports", "logs"
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const [doctorError, setDoctorError] = useState("");
+  const [selectedChatHistory, setSelectedChatHistory] = useState(null);
+  
+  // Local Database 2 (Patient Saved Reports)
+  const [patientLocalReports, setPatientLocalReports] = useState(() => {
+    const saved = localStorage.getItem("patientReports");
+    return saved ? JSON.parse(saved) : [];
+  });
+  
+  // Track if current prediction was shared with doctor database
+  const [reportShared, setReportShared] = useState(false);
+  const [sharingLoading, setSharingLoading] = useState(false);
+
+  // Vitals Recovery Simulator States & Controls
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simulationOriginalVitals, setSimulationOriginalVitals] = useState(null);
+
+  const startSimulation = () => {
+    if (isSimulating) return;
+    
+    // Save current values to restore later
+    const original = {
+      bmi: parseFloat(bmi),
+      systolicBp: parseInt(systolicBp),
+      diastolicBp: parseInt(diastolicBp),
+      sleepHours: parseFloat(sleepHours),
+      heartRate: parseFloat(heartRate),
+      spo2: parseFloat(spo2),
+      isSmoker,
+      isDiabetic
+    };
+    setSimulationOriginalVitals(original);
+    setIsSimulating(true);
+    
+    const steps = 6;
+    let step = 0;
+    
+    const interval = setInterval(async () => {
+      step++;
+      if (step > steps) {
+        clearInterval(interval);
+        setIsSimulating(false);
+        return;
+      }
+      
+      const t = step / steps;
+      
+      const nextBmi = original.bmi + (22.0 - original.bmi) * t;
+      const nextSystolic = Math.round(original.systolicBp + (115 - original.systolicBp) * t);
+      const nextDiastolic = Math.round(original.diastolicBp + (75 - original.diastolicBp) * t);
+      const nextSleep = original.sleepHours + (8.0 - original.sleepHours) * t;
+      const nextHr = original.heartRate + (72.0 - original.heartRate) * t;
+      const nextSpo2 = original.spo2 + (98.0 - original.spo2) * t;
+      
+      setBmi(nextBmi.toFixed(1));
+      setSystolicBp(nextSystolic.toString());
+      setDiastolicBp(nextDiastolic.toString());
+      setSleepHours(nextSleep.toFixed(1));
+      setHeartRate(nextHr.toFixed(0));
+      setSpo2(nextSpo2.toFixed(0));
+      setIsSmoker(false);
+      setIsDiabetic(false);
+      
+      try {
+        const payload = {
+          age: parseFloat(age),
+          bmi: nextBmi,
+          systolic_bp: nextSystolic,
+          diastolic_bp: nextDiastolic,
+          heart_rate: useDefaultHr ? null : nextHr,
+          spo2: useDefaultSpo2 ? null : nextSpo2,
+          sleep_hours: useDefaultSleep ? null : nextSleep,
+          has_cvd: hasCvd,
+          sex: patientSex,
+          is_smoker: false,
+          is_diabetic: false,
+          bp_treated: bpTreated,
+        };
+        const res = await fetch(`${apiUrl}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPrediction(data);
+        }
+      } catch (err) {
+        console.error("Simulation step failed", err);
+      }
+    }, 900);
+  };
+
+  const resetSimulation = () => {
+    if (simulationOriginalVitals) {
+      setBmi(simulationOriginalVitals.bmi.toFixed(1));
+      setSystolicBp(simulationOriginalVitals.systolicBp.toString());
+      setDiastolicBp(simulationOriginalVitals.diastolicBp.toString());
+      setSleepHours(simulationOriginalVitals.sleepHours.toFixed(1));
+      setHeartRate(simulationOriginalVitals.heartRate.toFixed(0));
+      setSpo2(simulationOriginalVitals.spo2.toFixed(0));
+      setIsSmoker(simulationOriginalVitals.isSmoker);
+      setIsDiabetic(simulationOriginalVitals.isDiabetic);
+      setSimulationOriginalVitals(null);
+      setIsSimulating(false);
+    }
+  };
+
+  // Helper to parse and render basic markdown clinical summaries
+  const renderMarkdown = (text) => {
+    if (!text) return null;
+    return text.split("\n").map((line, i) => {
+      let trimmed = line.trim();
+      if (trimmed.startsWith("### ")) {
+        return <h3 key={i} style={{ fontSize: "1.1rem", fontWeight: "bold", marginTop: "1rem", marginBottom: "0.5rem", color: "var(--text-main)" }}>{trimmed.slice(4)}</h3>;
+      }
+      if (trimmed.startsWith("## ")) {
+        return <h2 key={i} style={{ fontSize: "1.25rem", fontWeight: "bold", marginTop: "1.25rem", marginBottom: "0.5rem", color: "var(--text-main)" }}>{trimmed.slice(3)}</h2>;
+      }
+      if (trimmed.startsWith("**")) {
+        return <p key={i} style={{ margin: "0.5rem 0", fontWeight: "bold", color: "var(--text-main)" }}>{trimmed.replace(/\*\*/g, "")}</p>;
+      }
+      if (trimmed.startsWith("- [ ] ")) {
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.4rem 0" }}>
+            <input type="checkbox" readOnly checked={false} />
+            <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>{trimmed.slice(6)}</span>
+          </div>
+        );
+      }
+      if (trimmed.startsWith("- ")) {
+        return <li key={i} style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginLeft: "1.25rem", marginBottom: "0.25rem" }}>{trimmed.slice(2)}</li>;
+      }
+      if (trimmed.length === 0) {
+        return <div key={i} style={{ height: "0.5rem" }} />;
+      }
+      return <p key={i} style={{ fontSize: "0.85rem", color: "var(--text-secondary)", margin: "0.4rem 0", lineHeight: "1.4" }}>{trimmed}</p>;
+    });
+  };
+
+  // AI Consultation Summary Request Handler
+  const handleGenerateSummary = async () => {
+    setSummaryLoading(true);
+    try {
+      const payload = {
+        chat_history: chatLog,
+        vitals: {
+          age: parseFloat(age),
+          bmi: parseFloat(bmi),
+          systolic_bp: parseFloat(systolicBp),
+          diastolic_bp: parseFloat(diastolicBp),
+          heart_rate: useDefaultHr ? null : parseFloat(heartRate),
+          spo2: useDefaultSpo2 ? null : parseFloat(spo2),
+          sleep_hours: useDefaultSleep ? null : parseFloat(sleepHours),
+          has_cvd: hasCvd
+        }
+      };
+      
+      const res = await fetch(`${apiUrl}/ai-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSummaryMemo(data.summary);
+      }
+    } catch (err) {
+      alert("Could not contact clinical summary engine.");
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  // Auto transition to doctor workspace if token present
+  useEffect(() => {
+    if (doctorToken) {
+      setPortalMode("doctor");
+    }
+  }, [doctorToken]);
 
   // Active Workspace Tab
   const [activeTab, setActiveTab] = useState("diagnostics");
@@ -22,6 +225,16 @@ function App() {
   const [systolicBp, setSystolicBp] = useState(120);
   const [diastolicBp, setDiastolicBp] = useState(80);
   const [hasCvd, setHasCvd] = useState(false);
+  
+  // Framingham Input States
+  const [patientSex, setPatientSex] = useState("female");
+  const [isSmoker, setIsSmoker] = useState(false);
+  const [isDiabetic, setIsDiabetic] = useState(false);
+  const [bpTreated, setBpTreated] = useState(false);
+  
+  // AI Consultation Summary States
+  const [summaryMemo, setSummaryMemo] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   // Optional Fields Toggles & Custom values
   const [useDefaultHr, setUseDefaultHr] = useState(true);
@@ -92,6 +305,153 @@ function App() {
   useEffect(() => {
     checkApiConnection();
   }, [apiUrl]);
+
+  // Doctor Auth Handlers
+  const handleDoctorLogout = () => {
+    setDoctorToken("");
+    localStorage.removeItem("doctorToken");
+    setPortalMode("select");
+    setDoctorPassword("");
+  };
+
+  const handleDoctorLogin = async (e) => {
+    e.preventDefault();
+    setLoginError("");
+    try {
+      const res = await fetch(`${apiUrl}/doctor/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: doctorUsername, password: doctorPassword })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDoctorToken(data.access_token);
+        localStorage.setItem("doctorToken", data.access_token);
+        setPortalMode("doctor");
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setLoginError(errData.detail || "Incorrect username or password.");
+      }
+    } catch (err) {
+      setLoginError("Failed to connect to authentication server.");
+    }
+  };
+
+  const fetchDoctorData = async () => {
+    if (!doctorToken) return;
+    setDoctorLoading(true);
+    setDoctorError("");
+    try {
+      const reportsRes = await fetch(`${apiUrl}/doctor/reports`, {
+        headers: { "Authorization": `Bearer ${doctorToken}` }
+      });
+      const logsRes = await fetch(`${apiUrl}/doctor/logs`, {
+        headers: { "Authorization": `Bearer ${doctorToken}` }
+      });
+      
+      if (reportsRes.ok && logsRes.ok) {
+        const reportsData = await reportsRes.json();
+        const logsData = await logsRes.json();
+        setDoctorReports(reportsData);
+        setDoctorLogs(logsData);
+      } else {
+        if (reportsRes.status === 401 || logsRes.status === 401) {
+          handleDoctorLogout();
+          setLoginError("Session expired. Please log in again.");
+          setPortalMode("doctor_login");
+        } else {
+          setDoctorError("Failed to load clinical records.");
+        }
+      }
+    } catch (err) {
+      setDoctorError("Could not retrieve portal records from backend.");
+    } finally {
+      setDoctorLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (portalMode === "doctor") {
+      fetchDoctorData();
+    }
+  }, [portalMode, doctorTab]);
+
+  // Compile aggregate statistics for doctor analytics
+  const compileDoctorStats = () => {
+    if (doctorReports.length === 0) return null;
+    
+    let totalAge = 0, totalBmi = 0, totalSystolic = 0, totalDiastolic = 0;
+    const riskCounts = { Normal: 0, Moderate: 0, High: 0, Critical: 0 };
+    
+    doctorReports.forEach(r => {
+      totalAge += r.age;
+      totalBmi += r.bmi;
+      totalSystolic += r.systolic_bp;
+      totalDiastolic += r.diastolic_bp;
+      
+      // Standardize casing
+      const rLevel = r.risk_level ? r.risk_level.toLowerCase() : "";
+      if (rLevel === "normal") riskCounts.Normal++;
+      else if (rLevel === "moderate") riskCounts.Moderate++;
+      else if (rLevel === "high") riskCounts.High++;
+      else if (rLevel === "critical") riskCounts.Critical++;
+    });
+    
+    const count = doctorReports.length;
+    return {
+      avgAge: (totalAge / count).toFixed(1),
+      avgBmi: (totalBmi / count).toFixed(1),
+      avgBp: `${Math.round(totalSystolic / count)}/${Math.round(totalDiastolic / count)}`,
+      riskCounts
+    };
+  };
+
+  // Telehealth sharing handler
+  const shareReportWithDoctor = async () => {
+    if (!prediction) return;
+    setSharingLoading(true);
+    try {
+      const payload = {
+        age: parseFloat(age),
+        bmi: parseFloat(bmi),
+        systolic_bp: parseFloat(systolicBp),
+        diastolic_bp: parseFloat(diastolicBp),
+        heart_rate: useDefaultHr ? null : parseFloat(heartRate),
+        spo2: useDefaultSpo2 ? null : parseFloat(spo2),
+        sleep_hours: useDefaultSleep ? null : parseFloat(sleepHours),
+        has_cvd: hasCvd,
+        sex: patientSex,
+        is_smoker: isSmoker,
+        is_diabetic: isDiabetic,
+        bp_treated: bpTreated,
+        risk_level: prediction.risk_level,
+        model_prediction: prediction.model_prediction,
+        confidence_percent: prediction.confidence_percent,
+        probabilities: prediction.probabilities,
+        top_factors: prediction.top_factors,
+        warnings: prediction.warnings,
+        chat_history: chatLog
+      };
+      
+      const res = await fetch(`${apiUrl}/share-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        setReportShared(true);
+        if (doctorToken) {
+          fetchDoctorData();
+        }
+      } else {
+        alert("Failed to share report with the clinician database.");
+      }
+    } catch (err) {
+      alert("Error sharing report. Backend server may be offline.");
+    } finally {
+      setSharingLoading(false);
+    }
+  };
 
   // Scroll Chat to bottom on message updates
   useEffect(() => {
@@ -207,6 +567,10 @@ function App() {
       spo2: useDefaultSpo2 ? null : parseFloat(spo2),
       sleep_hours: useDefaultSleep ? null : parseFloat(sleepHours),
       has_cvd: hasCvd,
+      sex: patientSex,
+      is_smoker: isSmoker,
+      is_diabetic: isDiabetic,
+      bp_treated: bpTreated,
     };
 
     try {
@@ -226,6 +590,29 @@ function App() {
 
       const data = await response.json();
       setPrediction(data);
+      setReportShared(false);
+      
+      // Auto-save locally for patients (Database 2)
+      const newReport = {
+        id: Date.now(),
+        timestamp: new Date().toLocaleString(),
+        inputs: {
+          age: parseFloat(age),
+          bmi: parseFloat(bmi),
+          systolicBp: parseFloat(systolicBp),
+          diastolicBp: parseFloat(diastolicBp),
+          heartRate: useDefaultHr ? null : parseFloat(heartRate),
+          spo2: useDefaultSpo2 ? null : parseFloat(spo2),
+          sleepHours: useDefaultSleep ? null : parseFloat(sleepHours),
+          hasCvd
+        },
+        prediction: data
+      };
+      setPatientLocalReports((prev) => {
+        const updated = [newReport, ...prev];
+        localStorage.setItem("patientReports", JSON.stringify(updated));
+        return updated;
+      });
     } catch (err) {
       setApiError(err.message || "An unexpected connection error occurred.");
     } finally {
@@ -445,7 +832,7 @@ function App() {
   };
 
   // CHATBOT INCOMING MESSAGE PROCESSOR
-  const handleChatSubmit = (e) => {
+  const handleChatSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!chatInput.trim()) return;
 
@@ -460,61 +847,62 @@ function App() {
     setChatInput("");
     setChatTyping(true);
 
-    // Process Bot response after a short organic delay
-    setTimeout(() => {
-      let botResponse = "";
-      const text = userText.toLowerCase();
-
-      if (text.includes("interpret") || text.includes("vital") || text.includes("check my") || text.includes("current")) {
-        botResponse = interpretActiveVitals();
-      } else if (text.includes("how to use") || text.includes("guide") || text.includes("help") || text.includes("use this")) {
-        botResponse = (
-          "To assess patient risk:\n\n" +
-          "1. **Input Patient Parameters**: Drag the Age, BMI, and Blood Pressure sliders (or type values in the boxes) on the left panel.\n" +
-          "2. **Add Covariates**: Optionally specify custom Heart Rate, Oxygen (SpO2), or Sleep values, and toggle Cardiac History if applicable.\n" +
-          "3. **Run Assessment**: Click the green 'Evaluate Patient Risk Profile' button.\n" +
-          "4. **Analyze Report**: Inspect the Diagnostic Report for risk labels, likelihood breakdown, clinical warning messages, physiological risk drivers, and advisory guidelines."
-        );
-      } else if (text.includes("driver") || text.includes("physiological") || text.includes("factor") || text.includes("shap")) {
-        botResponse = (
-          "Physiological Risk Drivers represent the specific vital measurements (such as elevated blood pressure, low oxygen saturation, or body mass index) that are contributing most heavily to the patient's elevated health risk classification. AegisHealth's diagnostic engine analyzes these indicators to isolate which factors are driving clinical stress above the standard population baseline."
-        );
-      } else if (text.includes("override") || text.includes("safety") || text.includes("rules") || text.includes("threshold")) {
-        botResponse = (
-          "Clinical safety overrides are rule-based safeguards designed to bypass standard risk calculations when emergency thresholds are crossed. For example, if a patient exhibits hypertensive crisis (BP >= 180/120), severe hypoxemia (SpO2 < 90%), or severe tachycardia (HR >= 130), the system automatically flags them as Critical to ensure immediate medical attention."
-        );
-      } else if (text.includes("model") || text.includes("system") || text.includes("accuracy") || text.includes("dataset") || text.includes("calibrat")) {
-        botResponse = (
-          "The AegisHealth diagnostic engine is calibrated against 71,550 clinical screening observations to ensure clinical-grade precision. It has a verified diagnostic accuracy of 99.34%. You can view the full analytics in the 'System Performance & Analytics' tab."
-        );
-      } else if (text.includes("hello") || text.includes("hi") || text.includes("hey") || text.includes("greetings")) {
-        botResponse = "Hi there! I'm AegisBot. How can I assist you with clinical screening queries today?";
+    try {
+      const payload = {
+        message: userText,
+        vitals: {
+          age: parseFloat(age),
+          bmi: parseFloat(bmi),
+          systolic_bp: parseFloat(systolicBp),
+          diastolic_bp: parseFloat(diastolicBp),
+          heart_rate: useDefaultHr ? null : parseFloat(heartRate),
+          spo2: useDefaultSpo2 ? null : parseFloat(spo2),
+          sleep_hours: useDefaultSleep ? null : parseFloat(sleepHours),
+          has_cvd: hasCvd
+        }
+      };
+      
+      const res = await fetch(`${apiUrl}/ai-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setChatLog((prev) => [
+          ...prev,
+          {
+            sender: "bot",
+            text: data.reply,
+            isAi: data.ai_mode,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+        speakText(data.reply);
       } else {
-        botResponse = (
-          "I understand you're asking about that. As AegisBot, I recommend using the **'Interpret my current vitals'** or " +
-          "**'Physiological Risk Drivers'** buttons below, or clicking 'Evaluate Patient Risk Profile' on the left form to run the risk screening! Let me know if you have specific clinical questions."
-        );
+        throw new Error("Chat error");
       }
-
+    } catch (err) {
+      const errorReply = "I am having trouble reaching the clinical AI coordinator right now. Please verify your connection or ask about another symptom.";
       setChatLog((prev) => [
         ...prev,
         {
           sender: "bot",
-          text: botResponse,
+          text: errorReply,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
+      speakText(errorReply);
+    } finally {
       setChatTyping(false);
-      
-      // TRIGGER SPEECH
-      speakText(botResponse);
-    }, 700);
+    }
   };
 
   // Helper to send preset prompts in chatbot
   const handlePresetClick = (text) => {
     setChatInput(text);
-    setTimeout(() => {
+    setTimeout(async () => {
       const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setChatLog((prev) => [
         ...prev,
@@ -522,43 +910,50 @@ function App() {
       ]);
       setChatTyping(true);
 
-      setTimeout(() => {
-        let botResponse = "";
-        const lower = text.toLowerCase();
-        if (lower.includes("interpret")) {
-          botResponse = interpretActiveVitals();
-        } else if (lower.includes("how to use")) {
-          botResponse = (
-            "To assess patient risk:\n\n" +
-            "1. **Input Patient Parameters**: Drag the Age, BMI, and Blood Pressure sliders (or type values in the boxes) on the left panel.\n" +
-            "2. **Add Covariates**: Optionally specify custom Heart Rate, Oxygen (SpO2), or Sleep values, and toggle Cardiac History if applicable.\n" +
-            "3. **Run Assessment**: Click the green 'Evaluate Patient Risk Profile' button.\n" +
-            "4. **Analyze Report**: Inspect the Diagnostic Report for risk labels, likelihood breakdown, clinical warning messages, physiological risk drivers, and advisory guidelines."
-          );
-        } else if (lower.includes("drivers") || lower.includes("physiological")) {
-          botResponse = (
-            "Physiological Risk Drivers represent the specific vital measurements (such as elevated blood pressure, low oxygen saturation, or body mass index) that are contributing most heavily to the patient's elevated health risk classification. AegisHealth's diagnostic engine analyzes these indicators to isolate which factors are driving clinical stress above the standard population baseline."
-          );
-        } else if (lower.includes("override") || lower.includes("safety")) {
-          botResponse = (
-            "Clinical safety overrides are rule-based safeguards designed to bypass standard risk calculations when emergency thresholds are crossed. For example, if a patient exhibits hypertensive crisis (BP >= 180/120), severe hypoxemia (SpO2 < 90%), or severe tachycardia (HR >= 130), the system automatically flags them as Critical to ensure immediate medical attention."
-          );
+      try {
+        const payload = {
+          message: text,
+          vitals: {
+            age: parseFloat(age),
+            bmi: parseFloat(bmi),
+            systolic_bp: parseFloat(systolicBp),
+            diastolic_bp: parseFloat(diastolicBp),
+            heart_rate: useDefaultHr ? null : parseFloat(heartRate),
+            spo2: useDefaultSpo2 ? null : parseFloat(spo2),
+            sleep_hours: useDefaultSleep ? null : parseFloat(sleepHours),
+            has_cvd: hasCvd
+          }
+        };
+        const res = await fetch(`${apiUrl}/ai-chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setChatLog((prev) => [
+            ...prev,
+            {
+              sender: "bot",
+              text: data.reply,
+              isAi: data.ai_mode,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            }
+          ]);
+          speakText(data.reply);
+        } else {
+          throw new Error("Chat error");
         }
-
+      } catch (err) {
+        const errReply = "Connection to AI consultation service failed.";
         setChatLog((prev) => [
           ...prev,
-          {
-            sender: "bot",
-            text: botResponse,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
+          { sender: "bot", text: errReply, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
         ]);
+        speakText(errReply);
+      } finally {
         setChatTyping(false);
-        
-        // TRIGGER SPEECH
-        speakText(botResponse);
-      }, 700);
-
+      }
     }, 50);
     setChatInput("");
   };
@@ -582,6 +977,21 @@ function App() {
           </div>
 
           <div className="nav-actions">
+            {portalMode === "patient" && (
+              <button className="btn-secondary" style={{ marginRight: "1rem" }} onClick={() => setPortalMode("select")}>
+                ← Exit Portal
+              </button>
+            )}
+            {portalMode === "doctor_login" && (
+              <button className="btn-secondary" style={{ marginRight: "1rem" }} onClick={() => setPortalMode("select")}>
+                ← Back
+              </button>
+            )}
+            {portalMode === "doctor" && (
+              <button className="btn-secondary" style={{ marginRight: "1rem" }} onClick={handleDoctorLogout}>
+                Logout (Clinician)
+              </button>
+            )}
             {/* Live API status Badge dropdown */}
             <div className="api-dropdown-container">
               <button 
@@ -652,8 +1062,303 @@ function App() {
       {/* CORE CONTENT LAYOUT */}
       <main className="app-container">
         
-        {/* PLATFORM LANDING BANNER / HERO SECTION */}
-        {!heroCollapsed ? (
+        {portalMode === "select" && (
+          <div className="portal-selector-overlay" style={{ width: "100%" }}>
+            <div className="portal-selector-card">
+              <div className="portal-selector-header">
+                <h1>AegisHealth Workspace</h1>
+                <p>Select your workspace role to begin screening and assessment.</p>
+              </div>
+              <div className="portal-options-grid">
+                <div className="portal-opt-card" onClick={() => setPortalMode("patient")}>
+                  <div className="portal-opt-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </div>
+                  <div className="portal-opt-details">
+                    <h3>Patient Portal</h3>
+                    <p>Evaluate your physiological vitals, view AI Doctor assessments, and save screening history.</p>
+                  </div>
+                </div>
+                <div className="portal-opt-card" onClick={() => setPortalMode("doctor_login")}>
+                  <div className="portal-opt-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  </div>
+                  <div className="portal-opt-details">
+                    <h3>Clinician Dashboard</h3>
+                    <p>Monitor telehealth patient reports, analyze system overrides, and view diagnostic audit logs.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {portalMode === "doctor_login" && (
+          <div className="portal-selector-overlay" style={{ width: "100%" }}>
+            <div className="doctor-login-card">
+              <h2 className="doctor-login-title">Clinician Authentication</h2>
+              <form className="login-form" onSubmit={handleDoctorLogin}>
+                <div className="login-input-group">
+                  <label>Username</label>
+                  <input 
+                    type="text" 
+                    className="login-input" 
+                    value={doctorUsername} 
+                    onChange={(e) => setDoctorUsername(e.target.value)} 
+                    required 
+                  />
+                </div>
+                <div className="login-input-group">
+                  <label>Password</label>
+                  <input 
+                    type="password" 
+                    className="login-input" 
+                    value={doctorPassword} 
+                    onChange={(e) => setDoctorPassword(e.target.value)} 
+                    required 
+                  />
+                </div>
+                {loginError && <p style={{ color: "var(--risk-critical)", fontSize: "0.85rem", fontWeight: "bold" }}>{loginError}</p>}
+                <button type="submit" className="btn-primary" style={{ marginTop: "1rem" }}>
+                  Authenticate Credentials
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {portalMode === "doctor" && (
+          <div className="doctor-dashboard-container" style={{ width: "100%" }}>
+            <div className="hero-banner" style={{ padding: "1.5rem 2rem", borderRadius: "1rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <h1 className="hero-headline" style={{ fontSize: "1.75rem" }}>Clinician Portal & Calibration Desk</h1>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>Central telemetry database and system performance auditing desk.</p>
+                </div>
+                <button className="btn-secondary" onClick={fetchDoctorData} disabled={doctorLoading}>
+                  {doctorLoading ? "Refreshing..." : "Refresh Records"}
+                </button>
+              </div>
+            </div>
+
+            <div className="dashboard-tabs" style={{ marginTop: "1rem" }}>
+              <button 
+                className={`tab-btn ${doctorTab === "reports" ? "active" : ""}`}
+                onClick={() => setDoctorTab("reports")}
+              >
+                Shared Patient Reports ({doctorReports.length})
+              </button>
+              <button 
+                className={`tab-btn ${doctorTab === "stats" ? "active" : ""}`}
+                onClick={() => setDoctorTab("stats")}
+              >
+                Aggregate Clinic Analytics
+              </button>
+              <button 
+                className={`tab-btn ${doctorTab === "logs" ? "active" : ""}`}
+                onClick={() => setDoctorTab("logs")}
+              >
+                System Audit Logs ({doctorLogs.length})
+              </button>
+            </div>
+
+            {doctorError && (
+              <p style={{ color: "var(--risk-critical)", fontWeight: "bold" }}>{doctorError}</p>
+            )}
+
+            {doctorTab === "reports" && (
+              <section className="card">
+                <div className="card-header">
+                  <span className="card-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <path d="M9 17h6M9 13h6M9 9h6" />
+                    </svg>
+                  </span>
+                  <span className="card-title">Shared Patient Records (Database 1)</span>
+                </div>
+                <div className="card-body">
+                  {doctorReports.length === 0 ? (
+                    <div className="report-empty-state">
+                      <h3>No Shared Reports</h3>
+                      <p>Reports will appear here once patients submit them from the intake dashboard.</p>
+                    </div>
+                  ) : (
+                    <div className="doctor-reports-table-wrapper">
+                      <table className="reports-table">
+                        <thead>
+                          <tr>
+                            <th>Shared Time</th>
+                            <th>Vitals Details</th>
+                            <th>CVD History</th>
+                            <th>Assessed Risk</th>
+                            <th>Confidence</th>
+                            <th>Consultation Logs</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {doctorReports.map((report) => (
+                            <tr key={report.id}>
+                              <td>{new Date(report.shared_at).toLocaleString()}</td>
+                              <td>
+                                Age: {report.age} yrs | BMI: {report.bmi} kg/m² | BP: {report.systolic_bp}/{report.diastolic_bp} mmHg
+                                {report.heart_rate && ` | HR: ${report.heart_rate} bpm`}
+                                {report.spo2 && ` | SpO2: ${report.spo2}%`}
+                                {report.sleep_hours && ` | Sleep: ${report.sleep_hours} hrs`}
+                              </td>
+                              <td>{report.has_cvd ? "Yes" : "No"}</td>
+                              <td>
+                                <span className={`badge-risk ${report.risk_level}`}>
+                                  {report.risk_level}
+                                </span>
+                              </td>
+                              <td>{report.confidence_percent}%</td>
+                              <td>
+                                {report.chat_history && report.chat_history.length > 0 ? (
+                                  <button 
+                                    className="btn-secondary" 
+                                    style={{ padding: "0.25rem 0.5rem", fontSize: "0.72rem" }}
+                                    onClick={() => setSelectedChatHistory(report.chat_history)}
+                                  >
+                                    View Chat ({report.chat_history.filter(c => c.sender === "user").length} msg)
+                                  </button>
+                                ) : (
+                                  <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>No Chat Log</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* TAB CONTAINER: DOCTOR CLINIC ANALYTICS */}
+            {doctorTab === "stats" && (
+              <section className="card">
+                <div className="card-header">
+                  <span className="card-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="18" y1="20" x2="18" y2="10" />
+                      <line x1="12" y1="20" x2="12" y2="4" />
+                      <line x1="6" y1="20" x2="6" y2="14" />
+                    </svg>
+                  </span>
+                  <span className="card-title">Clinic Aggregate Analytics Desk</span>
+                </div>
+                <div className="card-body">
+                  {doctorReports.length === 0 ? (
+                    <div className="report-empty-state">
+                      <h3>No Analytics Available</h3>
+                      <p>Share patient reports first to populate clinic aggregate statistics.</p>
+                    </div>
+                  ) : (
+                    (() => {
+                      const stats = compileDoctorStats();
+                      if (!stats) return null;
+                      
+                      const total = doctorReports.length;
+                      const maxCount = Math.max(...Object.values(stats.riskCounts), 1);
+                      
+                      return (
+                        <div>
+                          {/* Grid of Averages */}
+                          <div className="grid-3" style={{ marginBottom: "2rem" }}>
+                            <div className="telemetry-badge-container" style={{ padding: "1.25rem", borderRadius: "0.75rem", backgroundColor: "var(--bg-input)" }}>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: "bold", textTransform: "uppercase" }}>Average Age</div>
+                              <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--primary)" }}>{stats.avgAge} <span style={{ fontSize: "1rem" }}>yrs</span></div>
+                            </div>
+                            <div className="telemetry-badge-container" style={{ padding: "1.25rem", borderRadius: "0.75rem", backgroundColor: "var(--bg-input)" }}>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: "bold", textTransform: "uppercase" }}>Average BMI</div>
+                              <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--primary)" }}>{stats.avgBmi} <span style={{ fontSize: "1rem" }}>kg/m²</span></div>
+                            </div>
+                            <div className="telemetry-badge-container" style={{ padding: "1.25rem", borderRadius: "0.75rem", backgroundColor: "var(--bg-input)" }}>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: "bold", textTransform: "uppercase" }}>Average Blood Pressure</div>
+                              <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--primary)" }}>{stats.avgBp} <span style={{ fontSize: "1.25rem" }}>mmHg</span></div>
+                            </div>
+                          </div>
+                          
+                          {/* Risk Distribution Bar Chart */}
+                          <div style={{ borderTop: "1px solid var(--border-inner)", paddingTop: "1.5rem" }}>
+                            <h3 style={{ fontSize: "1rem", fontWeight: "bold", marginBottom: "1.25rem" }}>Physiological Risk Stratification Profile</h3>
+                            
+                            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                              {Object.entries(stats.riskCounts).map(([risk, countVal]) => {
+                                const pct = total > 0 ? ((countVal / total) * 100).toFixed(0) : 0;
+                                const barWidth = total > 0 ? (countVal / maxCount) * 100 : 0;
+                                const colorClass = risk.toLowerCase();
+                                
+                                return (
+                                  <div key={risk} style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                                    <div style={{ width: "80px", fontWeight: "bold", fontSize: "0.85rem", textTransform: "capitalize" }}>
+                                      {risk}
+                                    </div>
+                                    <div style={{ flex: 1, height: "18px", backgroundColor: "var(--bg-input)", borderRadius: "4px", overflow: "hidden" }}>
+                                      <div 
+                                        className={`dist-bar-fill ${colorClass}`}
+                                        style={{ width: `${barWidth}%`, height: "100%", transition: "width 0.4s ease" }}
+                                      />
+                                    </div>
+                                    <div style={{ width: "60px", textAlign: "right", fontSize: "0.85rem", fontWeight: "bold" }}>
+                                      {countVal} ({pct}%)
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              </section>
+            )}
+
+            {doctorTab === "logs" && (
+              <section className="card">
+                <div className="card-header">
+                  <span className="card-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+                      <line x1="9" y1="9" x2="15" y2="9" />
+                      <line x1="9" y1="13" x2="13" y2="13" />
+                    </svg>
+                  </span>
+                  <span className="card-title">System Event & Authentication Audit Logs</span>
+                </div>
+                <div className="card-body">
+                  <div className="logs-terminal">
+                    {doctorLogs.map((log) => (
+                      <div key={log.id} className="log-row">
+                        <span className="log-time">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                        <span className={`log-type ${log.event_type}`}>{log.event_type}</span>
+                        <span className="log-msg">{log.message}</span>
+                      </div>
+                    ))}
+                    {doctorLogs.length === 0 && (
+                      <div style={{ color: "#888", textAlign: "center" }}>No logs recorded in database.</div>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {portalMode === "patient" && (
+          <>
+            {/* PLATFORM LANDING BANNER / HERO SECTION */}
+            {!heroCollapsed ? (
           <section className="hero-banner">
             <div className="hero-header-row">
               <div className="hero-title-group">
@@ -968,7 +1673,91 @@ function App() {
                   </div>
                 )}
 
-                {/* 3. CARDIOVASCULAR HISTORY */}
+                {/* 3. FRAMINGHAM COVARIATES */}
+                <div className="form-section-title" style={{ marginTop: "1rem" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  Framingham Risk Covariates
+                </div>
+
+                {/* Biological Sex Toggle */}
+                <div className="switch-control-row" style={{ marginBottom: "1rem" }}>
+                  <div className="switch-label-group">
+                    <span className="switch-title">Biological Sex</span>
+                    <span className="switch-subtitle">Used for gender-specific risk equations</span>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button 
+                      type="button" 
+                      className={`tab-btn ${patientSex === "female" ? "active" : ""}`}
+                      onClick={() => setPatientSex("female")}
+                      style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem", borderRadius: "0.25rem", border: "1px solid var(--border-inner)" }}
+                    >
+                      Female
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`tab-btn ${patientSex === "male" ? "active" : ""}`}
+                      onClick={() => setPatientSex("male")}
+                      style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem", borderRadius: "0.25rem", border: "1px solid var(--border-inner)" }}
+                    >
+                      Male
+                    </button>
+                  </div>
+                </div>
+
+                {/* Smoking Checkbox */}
+                <div className="switch-control-row" style={{ marginBottom: "0.75rem" }}>
+                  <div className="switch-label-group">
+                    <span className="switch-title">Active Tobacco Smoker</span>
+                    <span className="switch-subtitle">Regular smoking history increases Framingham multiplier</span>
+                  </div>
+                  <label className="toggle-switch">
+                    <input 
+                      type="checkbox" 
+                      checked={isSmoker}
+                      onChange={(e) => setIsSmoker(e.target.checked)}
+                    />
+                    <span className="toggle-slider" />
+                  </label>
+                </div>
+
+                {/* Diabetes Checkbox */}
+                <div className="switch-control-row" style={{ marginBottom: "0.75rem" }}>
+                  <div className="switch-label-group">
+                    <span className="switch-title">Diabetic Diagnosis</span>
+                    <span className="switch-subtitle">Diagnosed Type 1 or Type 2 Diabetes status</span>
+                  </div>
+                  <label className="toggle-switch">
+                    <input 
+                      type="checkbox" 
+                      checked={isDiabetic}
+                      onChange={(e) => setIsDiabetic(e.target.checked)}
+                    />
+                    <span className="toggle-slider" />
+                  </label>
+                </div>
+
+                {/* BP Medication Checkbox */}
+                <div className="switch-control-row" style={{ marginBottom: "1rem" }}>
+                  <div className="switch-label-group">
+                    <span className="switch-title">Hypertension Treatment</span>
+                    <span className="switch-subtitle">Active medication for high blood pressure control</span>
+                  </div>
+                  <label className="toggle-switch">
+                    <input 
+                      type="checkbox" 
+                      checked={bpTreated}
+                      onChange={(e) => setBpTreated(e.target.checked)}
+                    />
+                    <span className="toggle-slider" />
+                  </label>
+                </div>
+
+                {/* 4. CARDIOVASCULAR HISTORY */}
                 <label className="cvd-custom-box" style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
                   <input
                     type="checkbox"
@@ -1005,6 +1794,39 @@ function App() {
                 </button>
 
               </form>
+
+              {/* Vitals Recovery Simulator Panel */}
+              {prediction && (
+                <div className="simulator-panel">
+                  <div style={{ fontSize: "0.8rem", fontWeight: "bold", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.5rem" }}>
+                    Simulate Recovery Journey
+                  </div>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button 
+                      type="button" 
+                      className="btn-secondary" 
+                      onClick={startSimulation}
+                      disabled={isSimulating}
+                      style={{ flex: 1, justifyContent: "center", fontSize: "0.8rem", padding: "0.5rem" }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: "0.25rem" }}>
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                      {isSimulating ? "Simulating Journey..." : "Start Treatment Journey"}
+                    </button>
+                    {simulationOriginalVitals && (
+                      <button 
+                        type="button" 
+                        className="btn-secondary" 
+                        onClick={resetSimulation}
+                        style={{ fontSize: "0.8rem", padding: "0.5rem", color: "var(--risk-critical)" }}
+                      >
+                        Reset Vitals
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </section>
           </div>
 
@@ -1022,7 +1844,6 @@ function App() {
               <button 
                 className={`tab-btn ${activeTab === "comparison" ? "active" : ""}`}
                 onClick={() => setActiveTab("comparison")}
-                disabled={!prediction && !savedPatientA}
               >
                 Scenario Comparison
               </button>
@@ -1037,6 +1858,12 @@ function App() {
                 onClick={() => setActiveTab("explainers")}
               >
                 Safety Thresholds & Critical Escalations
+              </button>
+              <button 
+                className={`tab-btn ${activeTab === "my_reports" ? "active" : ""}`}
+                onClick={() => setActiveTab("my_reports")}
+              >
+                My Saved Reports ({patientLocalReports.length})
               </button>
             </div>
 
@@ -1053,6 +1880,21 @@ function App() {
                     </svg>
                   </span>
                   <span className="card-title">Diagnostics & Assessment Report</span>
+                  {prediction && (
+                    <button 
+                      className="btn-secondary" 
+                      onClick={() => window.print()} 
+                      style={{ marginLeft: "auto", padding: "0.35rem 0.75rem", fontSize: "0.8rem", height: "32px", display: "flex", alignItems: "center" }}
+                      title="Download PDF or Print Diagnostic Report"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: "0.35rem" }}>
+                        <polyline points="6 9 6 2 18 2 18 9" />
+                        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                        <rect x="6" y="14" width="12" height="8" />
+                      </svg>
+                      Print PDF
+                    </button>
+                  )}
                 </div>
 
                 <div className="card-body">
@@ -1112,16 +1954,28 @@ function App() {
                   {prediction && !loading && (
                     <div className="results-wrapper">
                       
-                      {/* Classification Badge Shield */}
-                      <div className={`risk-shield-hero ${prediction.risk_level}`}>
-                        <div className="risk-shield-label">Calculated Risk Classification</div>
-                        <div className="risk-shield-value">{prediction.risk_level}</div>
-                        <div className="risk-shield-confidence">
-                          {prediction.override_applied ? (
-                            <span style={{ color: "var(--risk-critical)" }}>⚠️ Safety Rule Override Engaged</span>
-                          ) : (
-                            <span>Confidence: {prediction.confidence_percent}%</span>
-                          )}
+                      {/* Dual Clinical Risk Engine View */}
+                      <div style={{ display: "flex", gap: "1.25rem", marginBottom: "1.5rem", flexWrap: "wrap" }}>
+                        {/* XGBoost AI Risk Shield */}
+                        <div className={`risk-shield-hero ${prediction.risk_level}`} style={{ flex: 1, minWidth: "220px", marginBottom: 0 }}>
+                          <div className="risk-shield-label">Aegis AI XGBoost Predictor</div>
+                          <div className="risk-shield-value" style={{ fontSize: "2.2rem" }}>{prediction.risk_level}</div>
+                          <div className="risk-shield-confidence">
+                            {prediction.override_applied ? (
+                              <span style={{ color: "var(--risk-critical)" }}>⚠️ Override Rule Engaged</span>
+                            ) : (
+                              <span>Confidence: {prediction.confidence_percent}%</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Framingham 10-Year Cardiovascular Risk Score */}
+                        <div className={`risk-shield-hero ${prediction.framingham_risk_category}`} style={{ flex: 1, minWidth: "220px", marginBottom: 0 }}>
+                          <div className="risk-shield-label">Framingham 10-Yr Cardiovascular Risk</div>
+                          <div className="risk-shield-value" style={{ fontSize: "2.2rem" }}>{prediction.framingham_risk_percent}%</div>
+                          <div className="risk-shield-confidence" style={{ textTransform: "uppercase", fontWeight: "bold" }}>
+                            Classification: {prediction.framingham_risk_category} Risk
+                          </div>
                         </div>
                       </div>
 
@@ -1135,6 +1989,29 @@ function App() {
                           </svg>
                           Lock as Patient A
                         </button>
+                      </div>
+
+                      {/* Telehealth share to Doctor database (Database 1) */}
+                      <div className="share-action-container" style={{ marginBottom: "1.25rem" }}>
+                        {reportShared ? (
+                          <div className="shared-check-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            Report successfully shared with Doctor Database
+                          </div>
+                        ) : (
+                          <button 
+                            className="btn-telehealth" 
+                            onClick={shareReportWithDoctor}
+                            disabled={sharingLoading}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13" />
+                            </svg>
+                            {sharingLoading ? "Sharing..." : "Share Report with Doctor"}
+                          </button>
+                        )}
                       </div>
 
                       {/* Safety warnings triggered */}
@@ -1179,33 +2056,88 @@ function App() {
                         </div>
                       </div>
 
-                      {/* SHAP chart explainer */}
+                      {/* SHAP waterfall chart explainer */}
                       {prediction.top_factors && prediction.top_factors.length > 0 && (
                         <div style={{ borderTop: "1px solid var(--border-inner)", paddingTop: "1.25rem" }}>
                           <h4 style={{ fontSize: "0.85rem", fontWeight: "800", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.75rem" }}>
-                            Primary Physiological Risk Drivers
+                            Primary Physiological Risk Drivers (SHAP Waterfall)
                           </h4>
-                          <div className="shap-bar-chart">
-                            {prediction.top_factors.map((factor, index) => {
-                              const rankWidth = index === 0 ? 100 : index === 1 ? 70 : 45;
+                          
+                          <div style={{ marginBottom: "1rem" }}>
+                            {(() => {
+                              const svgWidth = 400;
+                              const svgHeight = 150;
+                              const paddingLeft = 110;
+                              const paddingRight = 45;
+                              const chartWidth = svgWidth - paddingLeft - paddingRight;
+                              
+                              const maxVal = Math.max(...prediction.top_factors.map(f => Math.abs(f.value || 0)), 0.1);
+                              let currentX = chartWidth / 2;
+                              const scale = (chartWidth / 2) / maxVal;
+                              
+                              const rows = prediction.top_factors.map((factor, index) => {
+                                const val = factor.value || 0;
+                                const barWidth = Math.abs(val) * scale;
+                                const startX = val >= 0 ? currentX : currentX - barWidth;
+                                const color = val >= 0 ? "var(--risk-critical)" : "var(--risk-low)";
+                                
+                                const row = {
+                                  name: factor.feature.replace(/_/g, " "),
+                                  val: val > 0 ? `+${val.toFixed(3)}` : val.toFixed(3),
+                                  startX: paddingLeft + startX,
+                                  width: barWidth,
+                                  y: 15 + index * 38,
+                                  color,
+                                  isPositive: val >= 0
+                                };
+                                currentX = val >= 0 ? currentX + barWidth : currentX - barWidth;
+                                return row;
+                              });
+
                               return (
-                                <div className="shap-bar-item" key={factor}>
-                                  <div className="shap-bar-label" title={factor}>
-                                    {factor.replace(/_/g, " ")}
-                                  </div>
-                                  <div className="shap-bar-gauge-track">
-                                    <div 
-                                      className="shap-bar-gauge-fill" 
-                                      style={{ width: `${rankWidth}%` }}
-                                    />
-                                  </div>
-                                  <div className="shap-rank-badge">#{index + 1}</div>
-                                </div>
+                                <svg width="100%" viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ backgroundColor: "var(--bg-input)", borderRadius: "8px", padding: "10px" }}>
+                                  <line 
+                                    x1={paddingLeft + chartWidth / 2} 
+                                    y1={10} 
+                                    x2={paddingLeft + chartWidth / 2} 
+                                    y2={130} 
+                                    stroke="var(--text-muted)" 
+                                    strokeWidth="1.5" 
+                                    strokeDasharray="4"
+                                  />
+                                  <text x={paddingLeft + chartWidth / 2} y={142} fill="var(--text-muted)" fontSize="9" textAnchor="middle">Baseline</text>
+
+                                  {rows.map((row, index) => (
+                                    <g key={index}>
+                                      <text x={10} y={row.y + 12} fill="var(--text-secondary)" fontSize="10" fontWeight="bold">
+                                        {row.name.length > 15 ? row.name.slice(0, 13) + "..." : row.name}
+                                      </text>
+                                      <rect 
+                                        x={row.startX} 
+                                        y={row.y} 
+                                        width={row.width || 1} 
+                                        height={16} 
+                                        fill={row.color} 
+                                        rx="3"
+                                      />
+                                      <text 
+                                        x={row.isPositive ? row.startX + row.width + 5 : row.startX - 5} 
+                                        y={row.y + 12} 
+                                        fill={row.color} 
+                                        fontSize="9" 
+                                        fontWeight="bold" 
+                                        textAnchor={row.isPositive ? "start" : "end"}
+                                      >
+                                        {row.val}
+                                      </text>
+                                    </g>
+                                  ))}
+                                </svg>
                               );
-                            })}
+                            })()}
                           </div>
                           <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem", fontStyle: "italic" }}>
-                            Rank represents the physiological factors carrying the highest weight in the patient's diagnostic classification.
+                            Waterfall bars represent the cumulative attribution weights (SHAP values) of each physiological indicator on the final classification. Red bars increase risk; blue bars reduce risk.
                           </div>
                         </div>
                       )}
@@ -1244,6 +2176,22 @@ function App() {
                               </div>
                             </div>
                           ))}
+                        </div>
+                      </div>
+
+                      {/* Clinician Signature block - Print Only */}
+                      <div className="print-only-signature" style={{ display: "none", marginTop: "3rem", borderTop: "1px dashed var(--border-inner)", paddingTop: "1.5rem" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <div>
+                            <p style={{ margin: 0, fontWeight: "bold", fontSize: "0.85rem", color: "var(--text-main)" }}>Reviewing Clinician Signature:</p>
+                            <div style={{ height: "45px" }} />
+                            <div style={{ borderTop: "1px solid var(--text-main)", width: "200px" }} />
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <p style={{ margin: 0, fontWeight: "bold", fontSize: "0.85rem", color: "var(--text-main)" }}>Assessment Date:</p>
+                            <div style={{ height: "45px" }} />
+                            <div style={{ borderTop: "1px solid var(--text-main)", width: "200px", display: "inline-block" }} />
+                          </div>
                         </div>
                       </div>
 
@@ -1636,14 +2584,71 @@ function App() {
               </section>
             )}
 
+            {/* TAB CONTAINER: LOCAL PATIENT REPORTS */}
+            {activeTab === "my_reports" && (
+              <section className="card">
+                <div className="card-header">
+                  <span className="card-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <line x1="9" y1="9" x2="15" y2="9" />
+                      <line x1="9" y1="13" x2="15" y2="13" />
+                    </svg>
+                  </span>
+                  <span className="card-title">My Saved Reports (LocalStorage)</span>
+                </div>
+                <div className="card-body">
+                  {patientLocalReports.length === 0 ? (
+                    <div className="report-empty-state">
+                      <h3>No Reports Saved Yet</h3>
+                      <p>Reports are automatically saved in your browser history when you evaluate vitals.</p>
+                    </div>
+                  ) : (
+                    <div className="doctor-reports-table-wrapper">
+                      <table className="reports-table">
+                        <thead>
+                          <tr>
+                            <th>Timestamp</th>
+                            <th>Vitals (Age / BMI / BP)</th>
+                            <th>Risk Level</th>
+                            <th>Confidence</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {patientLocalReports.map((item) => (
+                            <tr key={item.id}>
+                              <td>{item.timestamp}</td>
+                              <td>
+                                Age: {item.inputs.age} yrs | BMI: {item.inputs.bmi} kg/m² | BP: {item.inputs.systolicBp}/{item.inputs.diastolicBp} mmHg
+                              </td>
+                              <td>
+                                <span className={`badge-risk ${item.prediction.risk_level}`}>
+                                  {item.prediction.risk_level}
+                                </span>
+                              </td>
+                              <td>{item.prediction.confidence_percent}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
           </div>
 
         </div>
+        </>
+        )}
       </main>
 
       {/* FLOATING HEALTH CHATBOT (AegisBot) */}
-      <button 
-        className="chatbot-launcher" 
+      {portalMode === "patient" && (
+        <>
+          <button 
+            className="chatbot-launcher" 
         onClick={toggleChat}
         title="Open AegisBot assistant"
       >
@@ -1712,6 +2717,21 @@ function App() {
             </div>
           </div>
 
+          {/* AI Consultation Summary Generator Trigger */}
+          {chatLog.filter(m => m.sender === "user").length > 0 && (
+            <div style={{ padding: "0.5rem 1rem", borderBottom: "1px solid var(--border-inner)", backgroundColor: "var(--bg-card-header)", display: "flex", justifyContent: "center" }}>
+              <button 
+                type="button"
+                className="btn-secondary" 
+                style={{ fontSize: "0.75rem", padding: "0.35rem 0.6rem", width: "100%", justifyContent: "center", height: "30px", display: "flex", alignItems: "center" }}
+                onClick={handleGenerateSummary}
+                disabled={summaryLoading}
+              >
+                {summaryLoading ? "Generating Clinical Memo..." : "📄 Generate Consultation Memo"}
+              </button>
+            </div>
+          )}
+
           {/* Messages Logs */}
           <div className="chatbot-messages">
             {chatLog.map((msg, i) => (
@@ -1777,6 +2797,8 @@ function App() {
           </form>
         </div>
       )}
+        </>
+      )}
 
       {/* APP FOOTER */}
       <footer className="app-footer">
@@ -1786,6 +2808,87 @@ function App() {
           </p>
         </div>
       </footer>
+
+      {/* CLINICIAN TRANSCRIPT VIEW MODAL */}
+      {selectedChatHistory && (
+        <div className="portal-selector-overlay" style={{ zIndex: 1000 }}>
+          <div className="doctor-login-card" style={{ width: "500px", maxWidth: "90%", display: "flex", flexDirection: "column", maxHeight: "80vh" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-inner)", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
+              <h2 style={{ fontSize: "1.1rem", fontWeight: "bold", margin: 0, color: "var(--text-main)" }}>Clinical Conversation Transcript</h2>
+              <button 
+                className="btn-secondary" 
+                style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", cursor: "pointer" }} 
+                onClick={() => setSelectedChatHistory(null)}
+              >
+                Close
+              </button>
+            </div>
+            
+            <div className="chat-modal-messages" style={{ overflowY: "auto", flex: 1, paddingRight: "0.5rem" }}>
+              {selectedChatHistory.map((msg, i) => (
+                <div key={i} className={`chat-message-row ${msg.sender}`} style={{ marginBottom: "1rem", display: "flex", flexDirection: "column", alignItems: msg.sender === "user" ? "flex-end" : "flex-start" }}>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>
+                    {msg.sender === "user" ? "Patient" : "AegisBot"} • {msg.time || "N/A"}
+                  </div>
+                  <div 
+                    style={{ 
+                      padding: "0.6rem 0.9rem", 
+                      borderRadius: "0.75rem", 
+                      fontSize: "0.85rem", 
+                      lineHeight: "1.4",
+                      maxWidth: "85%",
+                      backgroundColor: msg.sender === "user" ? "var(--primary)" : "var(--bg-input)", 
+                      color: msg.sender === "user" ? "#ffffff" : "var(--text-main)" 
+                    }}
+                  >
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI CONSULTATION SUMMARY MEMO MODAL */}
+      {summaryMemo && (
+        <div className="portal-selector-overlay summary-memo-modal" style={{ zIndex: 1000 }}>
+          <div className="doctor-login-card" style={{ width: "600px", maxWidth: "90%", display: "flex", flexDirection: "column", maxHeight: "80vh" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-inner)", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
+              <h2 style={{ fontSize: "1.1rem", fontWeight: "bold", margin: 0, color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                  <polyline points="10 9 9 9 8 9" />
+                </svg>
+                Clinical Consultation Memo
+              </h2>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button 
+                  className="btn-secondary" 
+                  style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem", cursor: "pointer", height: "28px", display: "flex", alignItems: "center" }} 
+                  onClick={() => window.print()}
+                >
+                  Print Memo
+                </button>
+                <button 
+                  className="btn-secondary" 
+                  style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem", cursor: "pointer", height: "28px", display: "flex", alignItems: "center" }} 
+                  onClick={() => setSummaryMemo(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            
+            <div className="summary-memo-body" style={{ overflowY: "auto", flex: 1, paddingRight: "0.5rem", textAlign: "left" }}>
+              {renderMarkdown(summaryMemo)}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

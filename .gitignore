@@ -28,3 +28,6 @@ Desktop.ini
 # Logs and databases
 *.log
 *.sqlite
+*.db
+.env
+*.env

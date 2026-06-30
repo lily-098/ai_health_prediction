@@ -1,15 +1,50 @@
 import os
 import json
 import warnings
+import datetime
 from typing import Optional, List
 
 import numpy as np
 import xgboost as xgb
-from fastapi import FastAPI, HTTPException, Query
+import jwt
+import google.generativeai as genai
+from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
+from database import SessionLocal, init_db, User, PatientReport, DoctorLog, verify_password
+
 warnings.filterwarnings("ignore")
+
+# Load environment variables from local .env file if it exists
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(env_path):
+    with open(env_path, "r") as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                parts = line.strip().split("=", 1)
+                if len(parts) == 2:
+                    os.environ[parts[0].strip()] = parts[1].strip()
+
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "aegis_super_secret_key_123")
+ALGORITHM = "HS256"
+
+def get_current_user(authorization: Optional[str] = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    try:
+        if authorization.startswith("Bearer "):
+            token = authorization.split(" ")[1]
+        else:
+            token = authorization
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token credentials")
+        return username
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
 
 # ================================================================
 # CONFIG — paths
@@ -165,6 +200,51 @@ def engineer_features(age, bmi, hr, sbp, dbp, spo2, sleep, has_cvd) -> np.ndarra
 # ================================================================
 # REQUEST / RESPONSE SCHEMAS
 # ================================================================
+import math
+
+def calculate_framingham_risk(
+    age: float,
+    bmi: float,
+    systolic_bp: float,
+    bp_treated: bool,
+    is_smoker: bool,
+    is_diabetic: bool,
+    sex: str
+) -> float:
+    # Framingham BMI-based model (D'Agostino et al., 2008)
+    age = max(30.0, min(74.0, age))
+    bmi = max(15.0, min(50.0, bmi))
+    systolic_bp = max(90.0, min(200.0, systolic_bp))
+    is_male = (sex.lower() == "male")
+    
+    if is_male:
+        b_age = 3.06117
+        b_bmi = 1.79588
+        b_sbp = 2.15515 if bp_treated else 1.99881
+        b_smoker = 0.56471
+        b_diabetes = 0.57367
+        mean_risk = 23.9802
+        baseline_survival = 0.88936
+    else:
+        b_age = 2.72107
+        b_bmi = 0.51125
+        b_sbp = 2.88267 if bp_treated else 2.81299
+        b_smoker = 0.61868
+        b_diabetes = 0.77763
+        mean_risk = 26.1931
+        baseline_survival = 0.95012
+        
+    sum_beta = (
+        b_age * math.log(age) +
+        b_bmi * math.log(bmi) +
+        b_sbp * math.log(systolic_bp) +
+        (b_smoker if is_smoker else 0.0) +
+        (b_diabetes if is_diabetic else 0.0)
+    )
+    
+    risk_score = 1.0 - math.pow(baseline_survival, math.exp(sum_beta - mean_risk))
+    return round(risk_score * 100, 1)
+
 class PatientInput(BaseModel):
     age: float = Field(..., ge=18, le=90, description="Age in years. Model trained on 18-90.")
     bmi: float = Field(..., ge=10, le=60, description="Body Mass Index.")
@@ -183,6 +263,10 @@ class PatientInput(BaseModel):
     has_cvd: bool = Field(
         False, description="Has the patient been clinically diagnosed with cardiovascular disease?"
     )
+    sex: str = Field("female", description="Biological sex: male or female.")
+    is_smoker: bool = Field(False, description="Is the patient a smoker?")
+    is_diabetic: bool = Field(False, description="Does the patient have diabetes?")
+    bp_treated: bool = Field(False, description="Is the patient on hypertension treatment?")
 
     @model_validator(mode="after")
     def check_bp_consistency(self):
@@ -197,10 +281,12 @@ class PatientOutput(BaseModel):
     override_applied: bool
     confidence_percent: float
     probabilities: dict
-    top_factors: Optional[List[str]] = None
+    top_factors: Optional[List[dict]] = None
     warnings: List[str]
     fields_filled_with_median: List[str]
     disclaimer: str
+    framingham_risk_percent: float
+    framingham_risk_category: str
 
 
 # ================================================================
@@ -301,9 +387,27 @@ def predict(patient: PatientInput, explain: bool = Query(True, description="Comp
                 sv_row = sv[0]
             abs_vals = np.abs(sv_row)
             top_idx = np.argsort(abs_vals)[::-1][:3]
-            top_factors = [FEATURE_COLS[i] for i in top_idx]
+            top_factors = [{"feature": FEATURE_COLS[i], "value": round(float(sv_row[i]), 4)} for i in top_idx]
         except Exception:
             top_factors = None
+
+    # Calculate Framingham score
+    f_risk = calculate_framingham_risk(
+        age=patient.age,
+        bmi=patient.bmi,
+        systolic_bp=patient.systolic_bp,
+        bp_treated=patient.bp_treated,
+        is_smoker=patient.is_smoker,
+        is_diabetic=patient.is_diabetic,
+        sex=patient.sex
+    )
+    
+    if f_risk < 10.0:
+        f_cat = "low"
+    elif f_risk <= 20.0:
+        f_cat = "intermediate"
+    else:
+        f_cat = "high"
 
     return PatientOutput(
         risk_level=final_label,
@@ -315,10 +419,267 @@ def predict(patient: PatientInput, explain: bool = Query(True, description="Comp
         warnings=override_warnings,
         fields_filled_with_median=filled,
         disclaimer=DISCLAIMER,
+        framingham_risk_percent=f_risk,
+        framingham_risk_category=f_cat,
     )
+
+
+# ================================================================
+# DATABASE & PORTAL EXTENSION ENDPOINTS
+# ================================================================
+
+class ShareReportRequest(BaseModel):
+    age: float
+    bmi: float
+    systolic_bp: float
+    diastolic_bp: float
+    heart_rate: Optional[float] = None
+    spo2: Optional[float] = None
+    sleep_hours: Optional[float] = None
+    has_cvd: bool
+    risk_level: str
+    model_prediction: str
+    confidence_percent: float
+    probabilities: dict
+    top_factors: Optional[List[dict]] = None
+    warnings: List[str]
+    chat_history: Optional[List[dict]] = None
+
+class ChatRequest(BaseModel):
+    message: str
+    vitals: Optional[dict] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+
+@app.post("/share-report")
+def share_report(report_data: ShareReportRequest):
+    db = SessionLocal()
+    try:
+        report = PatientReport(
+            age=report_data.age,
+            bmi=report_data.bmi,
+            systolic_bp=report_data.systolic_bp,
+            diastolic_bp=report_data.diastolic_bp,
+            heart_rate=report_data.heart_rate,
+            spo2=report_data.spo2,
+            sleep_hours=report_data.sleep_hours,
+            has_cvd=report_data.has_cvd,
+            risk_level=report_data.risk_level,
+            model_prediction=report_data.model_prediction,
+            confidence_percent=report_data.confidence_percent,
+            probabilities=json.dumps(report_data.probabilities),
+            top_factors=json.dumps(report_data.top_factors) if report_data.top_factors else None,
+            warnings=json.dumps(report_data.warnings),
+            chat_history=json.dumps(report_data.chat_history) if report_data.chat_history else None
+        )
+        db.add(report)
+        
+        tele_log = DoctorLog(
+            event_type="TELEHEALTH",
+            message=f"New report shared by patient. Risk Level: {report_data.risk_level}"
+        )
+        db.add(tele_log)
+        db.commit()
+        return {"status": "success", "message": "Report shared with doctor database successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.post("/ai-chat")
+def ai_chat(chat_data: ChatRequest):
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    
+    # Prompt context engineering
+    system_prompt = (
+        "You are AegisBot, an AI clinical screening doctor assistant. "
+        "A user is chatting with you. You must provide helpful, empathetic, "
+        "and accurate medical educational advice. You are NOT diagnosing them "
+        "definitively, but you can interpret symptoms and discuss possible causes based on general guidelines. "
+        "Always include a professional medical disclaimer to see a qualified doctor if symptoms are severe. "
+    )
+    
+    if chat_data.vitals:
+        vitals_str = ", ".join([f"{k}: {v}" for k, v in chat_data.vitals.items() if v is not None])
+        system_prompt += f"\nThe patient has active vitals entered: [{vitals_str}]."
+        
+    system_prompt += f"\nUser Query: {chat_data.message}\n"
+    
+    if gemini_key:
+        try:
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(system_prompt)
+            return {"reply": response.text, "ai_mode": True}
+        except Exception as e:
+            print(f"Gemini API Error: {e}")
+            return {
+                "reply": "Excuse me, I encountered a temporary connection issue. However, based on your request, please monitor your vitals closely and consult a primary care physician.",
+                "ai_mode": False
+            }
+    else:
+        # Fallback to local rule-based matching if no Gemini key is provided
+        text = chat_data.message.lower()
+        if "interpret" in text or "vital" in text or "current" in text:
+            reply = "Please run the intake assessment using the left panel. Based on the rules, we check thresholds like SpO2 < 90% or BP >= 180/120 for critical warnings."
+        elif "how to use" in text or "guide" in text:
+            reply = "To use the dashboard, input vitals in the left form, click 'Evaluate Patient Risk Profile', and inspect the risk report on the diagnostics tab."
+        else:
+            reply = "Hi! (Note: AI mode is disabled because GEMINI_API_KEY is not set). As a basic assistant, I recommend checking your physiological risk drivers using the intake panel or consulting a doctor if you feel unwell."
+        return {"reply": reply, "ai_mode": False}
+
+
+@app.post("/doctor/login")
+def login(credentials: LoginRequest):
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == credentials.username).first()
+        if not user or not verify_password(credentials.password, user.hashed_password):
+            auth_log = DoctorLog(
+                event_type="AUTH",
+                message=f"Failed login attempt for username: {credentials.username}"
+            )
+            db.add(auth_log)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+            
+        auth_log = DoctorLog(
+            event_type="AUTH",
+            message=f"User {credentials.username} logged in successfully",
+            username=credentials.username
+        )
+        db.add(auth_log)
+        db.commit()
+        
+        expire = datetime.datetime.utcnow() + datetime.timedelta(hours=2)
+        payload = {"sub": user.username, "exp": expire}
+        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        
+        return {"access_token": token, "token_type": "bearer"}
+    finally:
+        db.close()
+
+
+@app.get("/doctor/reports")
+def get_doctor_reports(username: str = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        reports = db.query(PatientReport).order_by(PatientReport.shared_at.desc()).all()
+        parsed_reports = []
+        for r in reports:
+            parsed_reports.append({
+                "id": r.id,
+                "age": r.age,
+                "bmi": r.bmi,
+                "systolic_bp": r.systolic_bp,
+                "diastolic_bp": r.diastolic_bp,
+                "heart_rate": r.heart_rate,
+                "spo2": r.spo2,
+                "sleep_hours": r.sleep_hours,
+                "has_cvd": r.has_cvd,
+                "risk_level": r.risk_level,
+                "model_prediction": r.model_prediction,
+                "confidence_percent": r.confidence_percent,
+                "probabilities": json.loads(r.probabilities),
+                "top_factors": json.loads(r.top_factors) if r.top_factors else None,
+                "warnings": json.loads(r.warnings),
+                "chat_history": json.loads(r.chat_history) if r.chat_history else [],
+                "shared_at": r.shared_at.isoformat()
+            })
+        return parsed_reports
+    finally:
+        db.close()
+
+
+@app.get("/doctor/logs")
+def get_doctor_logs(username: str = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        logs = db.query(DoctorLog).order_by(DoctorLog.timestamp.desc()).limit(100).all()
+        parsed_logs = []
+        for l in logs:
+            parsed_logs.append({
+                "id": l.id,
+                "timestamp": l.timestamp.isoformat(),
+                "event_type": l.event_type,
+                "message": l.message,
+                "username": l.username
+            })
+        return parsed_logs
+    finally:
+        db.close()
+
+class SummaryRequest(BaseModel):
+    chat_history: List[dict]
+    vitals: dict
+
+@app.post("/ai-summary")
+def generate_consultation_summary(req: SummaryRequest):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    vitals_text = ", ".join([f"{k}: {v}" for k, v in req.vitals.items()])
+    chat_text = "\n".join([f"{msg.get('sender')}: {msg.get('text')}" for msg in req.chat_history])
+    
+    system_prompt = (
+        "You are an expert clinical medical scribe. Your task is to analyze the patient's vitals "
+        "and their text conversation with AegisBot to compile a professional, highly structured "
+        "Clinical Consultation Summary Memo. Format the response strictly in Markdown.\n\n"
+        "The memo MUST have the following structure:\n"
+        "1. **Patient Intake Summary**: A concise summary of their vitals and demographics.\n"
+        "2. **Reported Symptoms & Concerns**: Synthesize what symptoms they discussed (e.g. headaches, dizziness).\n"
+        "3. **AI Preliminary Attributions**: What risk factors might be linked (e.g. high blood pressure, sleep deprivation).\n"
+        "4. **Lifestyle & Dietary Guidance**: Suggest evidence-based recommendations (e.g. low-sodium diet, stress reduction).\n"
+        "5. **Consultation Checklist**: A checklist of 3-4 specific questions they should ask their doctor.\n\n"
+        "CRITICAL: Include a clear warning at the top and bottom: '⚠️ DISCLAIMER: This is an AI-generated consultation summary memo and does not substitute for professional medical diagnosis or care.'\n"
+        "Do not diagnose any specific diseases directly."
+    )
+    user_prompt = f"Patient Vitals:\n{vitals_text}\n\nChat Conversation History:\n{chat_text}"
+    
+    if api_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(f"{system_prompt}\n\n{user_prompt}")
+            return {"summary": response.text}
+        except Exception:
+            pass
+            
+    fallback_markdown = (
+        "⚠️ **DISCLAIMER: This is an AI-generated consultation summary memo and does not substitute for professional medical diagnosis or care.**\n\n"
+        "### CLINICAL CONSULTATION SUMMARY MEMO\n\n"
+        "**Patient Intake Summary:**\n"
+        f"- BP: {req.vitals.get('systolic_bp', 'N/A')}/{req.vitals.get('diastolic_bp', 'N/A')} mmHg\n"
+        f"- BMI: {req.vitals.get('bmi', 'N/A')} kg/m²\n"
+        f"- Age: {req.vitals.get('age', 'N/A')} yrs\n\n"
+        "**Reported Symptoms & Concerns:**\n"
+        "Patient completed AegisBot intake chat logs. Common clinical observations from reports note primary concerns related to cardiorespiratory and sleep quality.\n\n"
+        "**AI Preliminary Attributions:**\n"
+        "- Elevated BP readings correlate with cardiovascular workload.\n"
+        "- Standard clinical recommendation is to monitor daily trends.\n\n"
+        "**Lifestyle & Dietary Guidance:**\n"
+        "- Reduce dietary sodium intake (<2g daily).\n"
+        "- Optimize sleep hygiene to achieve 7-8 hours nightly.\n\n"
+        "**Consultation Checklist (Ask Your Doctor):**\n"
+        "- [ ] Are my home BP measurements indicative of hypertension?\n"
+        "- [ ] Should I obtain a comprehensive lipid panel?\n"
+        "- [ ] Are my reported symptoms linked to cardiovascular workload?\n\n"
+        "⚠️ **DISCLAIMER: This is an AI-generated consultation summary memo and does not substitute for professional medical diagnosis or care.**"
+    )
+    return {"summary": fallback_markdown}
 
 
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
