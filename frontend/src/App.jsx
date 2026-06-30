@@ -9,6 +9,10 @@ function App() {
 
   // API Config
   const [apiUrl, setApiUrl] = useState(() => {
+    const envUrl = import.meta.env.VITE_API_URL;
+    if (envUrl) {
+      return envUrl;
+    }
     if (typeof window !== "undefined" && window.location) {
       const hostname = window.location.hostname;
       if (hostname) {
