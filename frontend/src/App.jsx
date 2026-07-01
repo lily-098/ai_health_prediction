@@ -10,18 +10,22 @@ function App() {
   // API Config
   const [apiUrl, setApiUrl] = useState(() => {
     const envUrl = import.meta.env.VITE_API_URL;
-    if (envUrl) {
-      return envUrl;
+    if (envUrl && envUrl.trim() !== "") {
+      return envUrl.trim();
     }
+    // Fallback for local development only
     if (typeof window !== "undefined" && window.location) {
-      const hostname = window.location.hostname;
+      const { hostname } = window.location;
       if (hostname === "localhost" || hostname === "127.0.0.1") {
         return `http://${hostname}:8000`;
       }
-      // If deployed in production and no VITE_API_URL is provided, 
-      // assume backend is on the same host (e.g. via reverse proxy or same domain)
-      // or at least use https instead of forcing http and port 8000.
-      return `https://${hostname}`;
+      // Running in production but VITE_API_URL was not set at build time.
+      // Log a warning — user must set VITE_API_URL in Render environment settings.
+      console.warn(
+        "[AegisHealth] VITE_API_URL is not set. " +
+        "Please set the VITE_API_URL environment variable in your Render Static Site " +
+        "environment settings to point to your backend API URL, then redeploy."
+      );
     }
     return "http://127.0.0.1:8000";
   });
