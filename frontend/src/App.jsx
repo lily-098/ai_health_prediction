@@ -15,9 +15,13 @@ function App() {
     }
     if (typeof window !== "undefined" && window.location) {
       const hostname = window.location.hostname;
-      if (hostname) {
+      if (hostname === "localhost" || hostname === "127.0.0.1") {
         return `http://${hostname}:8000`;
       }
+      // If deployed in production and no VITE_API_URL is provided, 
+      // assume backend is on the same host (e.g. via reverse proxy or same domain)
+      // or at least use https instead of forcing http and port 8000.
+      return `https://${hostname}`;
     }
     return "http://127.0.0.1:8000";
   });

@@ -107,6 +107,14 @@ def _ensure_shap():
     if _shap_init_done:
         return
     _shap_init_done = True
+    
+    # Render's free tier (512MB) will OOM kill the process if we load SHAP TreeExplainer 
+    # for a large XGBoost model. Disable SHAP on Render to ensure backend stability.
+    if os.environ.get("RENDER") == "true" or os.environ.get("DISABLE_SHAP") == "true":
+        explainer = None
+        SHAP_AVAILABLE = False
+        return
+
     try:
         import shap
         explainer = shap.TreeExplainer(booster)
