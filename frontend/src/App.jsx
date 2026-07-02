@@ -31,6 +31,7 @@ function App() {
   });
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
   const [apiConnected, setApiConnected] = useState(false);
+  const [apiWaking, setApiWaking] = useState(false);
   const [modelInfo, setModelInfo] = useState(null);
 
   // Portal Role Selection Mode: "select", "patient", "doctor_login", "doctor"
@@ -292,31 +293,64 @@ function App() {
     }
   }, [theme]);
 
-  // Test and Fetch API Connection
-  const checkApiConnection = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/health`);
-      if (res.ok) {
-        setApiConnected(true);
-        // Fetch model info
-        const infoRes = await fetch(`${apiUrl}/model-info`);
-        if (infoRes.ok) {
-          const infoData = await infoRes.json();
-          setModelInfo(infoData);
+  // Test and Fetch API Connection — with retry for Render free-tier cold starts
+  const checkApiConnection = async (retries = 3, delayMs = 4000) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000); // 8s timeout per attempt
+        const res = await fetch(`${apiUrl}/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          setApiConnected(true);
+          setApiWaking(false);
+          // Fetch model info
+          try {
+            const infoRes = await fetch(`${apiUrl}/model-info`);
+            if (infoRes.ok) {
+              const infoData = await infoRes.json();
+              setModelInfo(infoData);
+            }
+          } catch (_) {}
+          return; // success — stop retrying
         }
-      } else {
+      } catch (err) {
+        console.warn(`API health check attempt ${attempt}/${retries} failed:`, err.message);
+      }
+      // Not connected yet
+      if (attempt === 1) {
+        // Show "waking up" after first failure so the user knows
+        setApiWaking(true);
         setApiConnected(false);
       }
-    } catch (err) {
-      setApiConnected(false);
-      console.warn("API health check failed:", err);
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
     }
+    // All retries exhausted
+    setApiConnected(false);
+    setApiWaking(false);
   };
 
   // Check connection on load or when apiUrl changes
   useEffect(() => {
     checkApiConnection();
   }, [apiUrl]);
+
+  // Periodic keep-alive poll every 30 seconds — auto-reconnects when Render wakes up
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!apiConnected) {
+        checkApiConnection(1, 0); // single quick check when polling
+      } else {
+        // Lightweight ping to detect if backend went offline
+        fetch(`${apiUrl}/health`)
+          .then((r) => { if (!r.ok) setApiConnected(false); })
+          .catch(() => setApiConnected(false));
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [apiUrl, apiConnected]);
 
   // Doctor Auth Handlers
   const handleDoctorLogout = () => {
@@ -1011,8 +1045,8 @@ function App() {
                 onClick={() => setApiSettingsOpen(!apiSettingsOpen)}
                 title="Click to edit backend URL connection settings"
               >
-                <span className={`status-dot ${apiConnected ? "connected" : "disconnected"}`} />
-                {apiConnected ? "System Connected" : "System Offline"}
+                <span className={`status-dot ${apiConnected ? "connected" : apiWaking ? "waking" : "disconnected"}`} />
+                {apiConnected ? "System Connected" : apiWaking ? "Waking Up..." : "System Offline"}
               </button>
 
               {apiSettingsOpen && (

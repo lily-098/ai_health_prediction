@@ -252,6 +252,12 @@ body {
   animation: pulseRed 2s infinite;
 }
 
+.status-dot.waking {
+  background-color: var(--risk-high);
+  box-shadow: 0 0 8px var(--risk-high);
+  animation: pulseAmber 1.2s infinite;
+}
+
 /* Interactive Theme Toggle Switch */
 .theme-toggle-btn {
   background: none;
@@ -1723,6 +1729,12 @@ body {
   0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
   70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
   100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+@keyframes pulseAmber {
+  0% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
 }
 
 @keyframes pulseCriticalBg {
