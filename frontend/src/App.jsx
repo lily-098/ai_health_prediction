@@ -990,18 +990,18 @@ function App() {
 
           <div className="nav-actions">
             {portalMode === "patient" && (
-              <button className="btn-secondary" style={{ marginRight: "1rem" }} onClick={() => setPortalMode("select")}>
+              <button className="btn-secondary nav-portal-btn" onClick={() => setPortalMode("select")}>
                 ← Exit Portal
               </button>
             )}
             {portalMode === "doctor_login" && (
-              <button className="btn-secondary" style={{ marginRight: "1rem" }} onClick={() => setPortalMode("select")}>
+              <button className="btn-secondary nav-portal-btn" onClick={() => setPortalMode("select")}>
                 ← Back
               </button>
             )}
             {portalMode === "doctor" && (
-              <button className="btn-secondary" style={{ marginRight: "1rem" }} onClick={handleDoctorLogout}>
-                Logout (Clinician)
+              <button className="btn-secondary nav-portal-btn" onClick={handleDoctorLogout}>
+                Logout
               </button>
             )}
             {/* Live API status Badge dropdown */}
